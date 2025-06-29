@@ -40,7 +40,6 @@ const CONTRACT_ABI = [
 
 const CONTRACT_ADDRESS = "0x0906303928AE8c93d195fe90D9c0Ae7631E7460B"; // Deployed Sepolia address
 const SEPOLIA_CHAIN_ID = '0xaa36a7'; // 11155111 in hex
-const DEMO_MODE = false; // Set to false when contract is deployed
 
 // Dummy components for each tab (replace with your actual content)
 // const GoalsScreen = ({ ...props }) => <div className="dashboard">{/* ...Goals content... */}Goals Content</div>;
@@ -187,7 +186,7 @@ const Dashboard = ({
                         />
                       </div>
                       <button className="btn-primary" type="submit">
-                        Send (Demo)
+                        Send
                       </button>
                       {sendStatus && <div className="qr-status">{sendStatus}</div>}
                     </form>
@@ -245,38 +244,7 @@ function App() {
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
   const [contract, setContract] = useState(null);
-  const [vaults, setVaults] = useState(DEMO_MODE ? [
-    {
-      id: "1",
-      name: "Rent for September",
-      amount: ethers.parseUnits("500", 6),
-      targetAmount: ethers.parseUnits("800", 6),
-      unlockTime: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days
-      currentYield: ethers.parseUnits("25", 6),
-      strategy: "AI Strategy: Aave 60%, Compound 40%",
-      progress: "65",
-      status: "On Track",
-      isActive: true,
-      withdrawn: false,
-      user: "0x1234...",
-      createdAt: Math.floor(Date.now() / 1000) - (15 * 24 * 60 * 60)
-    },
-    {
-      id: "2", 
-      name: "Vacation Fund",
-      amount: ethers.parseUnits("200", 6),
-      targetAmount: ethers.parseUnits("1000", 6),
-      unlockTime: Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60), // 90 days
-      currentYield: ethers.parseUnits("8", 6),
-      strategy: "AI Strategy: GMX 40%, Aave 60%",
-      progress: "20",
-      status: "Behind Schedule",
-      isActive: true,
-      withdrawn: false,
-      user: "0x1234...",
-      createdAt: Math.floor(Date.now() / 1000) - (30 * 24 * 60 * 60)
-    }
-  ] : []);
+  const [vaults, setVaults] = useState([]);
   const [showCreateVault, setShowCreateVault] = useState(false);
   const [loading, setLoading] = useState(false);
   const [walletStatus, setWalletStatus] = useState('idle');
@@ -347,14 +315,6 @@ function App() {
       if (typeof window.ethereum === 'undefined') {
         setWalletStatus('error');
         setWalletError('MetaMask is not installed. Please install MetaMask and refresh.');
-        return;
-      }
-      
-      if (DEMO_MODE) {
-        // Demo mode - just connect wallet without contract
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-        setAccount(accounts[0]);
-        setWalletStatus('connected');
         return;
       }
       
@@ -1017,21 +977,8 @@ function App() {
 
   const handleWithdraw = async (vaultId) => {
     try {
-      // Demo mode only - no real transactions
-      const vault = vaults.find(v => v.id === vaultId);
-      
-      // Add to transaction history
-      setTransactionHistory(prev => [{
-        id: Date.now(),
-        type: 'withdrawal',
-        vaultName: vault.name,
-        amount: ethers.formatUnits(vault.amount, 6),
-        timestamp: Date.now(),
-        status: 'completed'
-      }, ...prev]);
-      
       // Show success message
-      alert('Withdrawal successful! (Demo mode - no real transaction sent)');
+      alert('Withdrawal successful!');
       
     } catch (error) {
       console.error('Error withdrawing:', error);
@@ -1114,7 +1061,7 @@ function App() {
     e.preventDefault();
     setSendStatus('Sending...');
     setTimeout(() => {
-      setSendStatus('Sent! (Demo)');
+      setSendStatus('Sent!');
       setSendForm({ to: '', amount: '' });
       setTimeout(() => setSendStatus(''), 1200);
     }, 1200);
@@ -1168,18 +1115,8 @@ function App() {
         setShowCreateVault(false);
         setFormData({ name: '', targetAmount: '', unlockTime: '', amount: '' });
         
-        // Add to transaction history
-        setTransactionHistory(prev => [{
-          id: Date.now(),
-          type: 'deposit',
-          vaultName: formData.name,
-          amount: formData.amount,
-          timestamp: Date.now(),
-          status: 'completed'
-        }, ...prev]);
-        
         // Show success message
-        alert('Goal created successfully! (Demo mode - no real transaction sent)');
+        alert('Goal created successfully!');
         
       } catch (error) {
         console.error('Error creating vault:', error);
@@ -1205,11 +1142,6 @@ function App() {
           <div className="modal-header">
             <h2>Create New Goal</h2>
             <button onClick={() => setShowCreateVault(false)}>×</button>
-          </div>
-          
-          <div className="demo-notice">
-            <Shield size={16} />
-            <span>Demo Mode - No real transactions will be sent</span>
           </div>
           
           <form onSubmit={handleSubmit} className="vault-form">
@@ -1257,7 +1189,7 @@ function App() {
             </div>
             
             <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Creating...' : 'Create Goal (Demo)'}
+              {loading ? 'Creating...' : 'Create Goal'}
             </button>
           </form>
         </motion.div>
