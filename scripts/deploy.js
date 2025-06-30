@@ -39,8 +39,7 @@ async function main() {
   const YieldLockPlus = await ethers.getContractFactory("YieldLockPlus");
   const yieldLockPlus = await YieldLockPlus.deploy(
     config.functionsRouter,
-    config.usdcPriceFeed,
-    config.usdcToken
+    deployer.address // initialOwner for Ownable
   );
 
   await yieldLockPlus.waitForDeployment();
@@ -69,8 +68,6 @@ async function main() {
   console.log("Contract addresses:");
   console.log("- YieldLockPlus:", yieldLockPlusAddress);
   console.log("- Functions Router:", config.functionsRouter);
-  console.log("- USDC Price Feed:", config.usdcPriceFeed);
-  console.log("- USDC Token:", config.usdcToken);
 
   // Test basic functionality
   console.log("\n🧪 Testing basic functionality...");
@@ -95,9 +92,7 @@ async function main() {
     deployer: deployer.address,
     contracts: {
       yieldLockPlus: yieldLockPlusAddress,
-      functionsRouter: config.functionsRouter,
-      usdcPriceFeed: config.usdcPriceFeed,
-      usdcToken: config.usdcToken
+      functionsRouter: config.functionsRouter
     },
     timestamp: new Date().toISOString()
   };

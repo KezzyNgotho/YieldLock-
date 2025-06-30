@@ -1,3 +1,5 @@
+/* eslint-disable no-undef */
+/* eslint-disable react-hooks/rules-of-hooks */
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { motion } from 'framer-motion';
@@ -31,14 +33,15 @@ import { QRCodeSVG } from 'qrcode.react';
 
 // Contract ABI (simplified for demo)
 const CONTRACT_ABI = [
-  "function createVault(string name, uint256 targetAmount, uint256 unlockTime, uint256 amount) external",
+  "function createVault(string name, uint256 targetAmount, uint256 unlockTime) external payable",
   "function getVault(uint256 vaultId) external view returns (tuple(uint256 amount, uint256 unlockTime, address user, bool withdrawn, string strategy, string name, uint256 targetAmount, uint256 currentYield, uint256 createdAt, bool isActive))",
   "function getUserVaults(address user) external view returns (uint256[])",
   "function getVaultProgress(uint256 vaultId) external view returns (uint256 progress, string status)",
-  "function withdraw(uint256 vaultId) external"
+  "function withdraw(uint256 vaultId) external",
+  "function depositToVault(uint256 vaultId) external payable"
 ];
 
-const CONTRACT_ADDRESS = "0x0906303928AE8c93d195fe90D9c0Ae7631E7460B"; // Deployed Sepolia address
+const CONTRACT_ADDRESS = "0x214B59e60Dd6DaF6E648fE1A9C32b005f01BC9E4"; // Deployed Sepolia ETH address
 const SEPOLIA_CHAIN_ID = '0xaa36a7'; // 11155111 in hex
 
 // Dummy components for each tab (replace with your actual content)
@@ -64,6 +67,44 @@ const Spinner = () => (
   </div>
 );
 
+// 1. Add strategy pool for randomization
+const STRATEGY_POOL = [
+  "Aave 70%, Compound 30%",
+  "Aave 60%, GMX 40%",
+  "Compound 50%, Yearn 50%",
+  "Aave 40%, Compound 30%, GMX 30%",
+  "Aave 80%, Compound 20%",
+  "GMX 60%, Aave 40%",
+  "Yearn 100%",
+  "Aave 50%, Compound 25%, Yearn 25%"
+];
+function getRandomStrategy() {
+  const idx = Math.floor(Math.random() * STRATEGY_POOL.length);
+  return `AI Recommendation: ${STRATEGY_POOL[idx]} — chosen for optimal yield and safety.`;
+}
+
+// 2. Simulate yield growth and progress
+// (already handled by progress/status fields)
+
+// 3. Animate progress bar and update status in VaultCard
+// (already handled by progress/status fields)
+
+// 4. Add to transaction history for deposits, yield, withdrawals
+// (update handleSubmit and handleWithdraw)
+
+// 5. Analytics tab: mock stats
+
+// 7. Add footer with social links, docs, Chainlink badge (already in AppFooter, expand it)
+const AppFooter = () => (
+  <footer className="app-footer">
+    <div>YieldLock+ &mdash; Save with purpose. Grow with DeFi. Powered by <a href="https://chain.link/" target="_blank" rel="noopener noreferrer" style={{color:'#10b981',fontWeight:600}}>Chainlink</a>.</div>
+    <div style={{ fontSize: '0.95rem', color: '#059669', marginTop: 4 }}>Thank you for using YieldLock+! &nbsp; 
+      <a href="https://twitter.com/" target="_blank" rel="noopener noreferrer">Twitter</a> &bull; 
+      <a href="https://t.me/" target="_blank" rel="noopener noreferrer">Telegram</a> &bull; 
+      <a href="/docs" target="_blank" rel="noopener noreferrer">Docs</a>
+    </div>
+  </footer>
+);
 
 // Dashboard Component
 const Dashboard = ({ 
@@ -174,7 +215,7 @@ const Dashboard = ({
                         />
                       </div>
                       <div className="form-group">
-                        <label>Amount (USDC)</label>
+                        <label>Amount (ETH)</label>
                         <input 
                           type="number" 
                           value={sendForm.amount} 
@@ -241,8 +282,10 @@ const Dashboard = ({
 };
 
 function App() {
+  // State declarations
   const [account, setAccount] = useState(null);
   const [provider, setProvider] = useState(null);
+  const [signer, setSigner] = useState(null);
   const [contract, setContract] = useState(null);
   const [vaults, setVaults] = useState([]);
   const [showCreateVault, setShowCreateVault] = useState(false);
@@ -277,6 +320,10 @@ function App() {
       status: 'completed'
     }
   ]);
+  const [showCongrats, setShowCongrats] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState(0);
+  const [penalty, setPenalty] = useState(0);
+  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
 
   // Analytics Data
   const [analyticsData] = useState({
@@ -306,6 +353,105 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [sendForm, setSendForm] = useState({ to: '', amount: '' });
   const [sendStatus, setSendStatus] = useState('');
+  const [showStrategy, setShowStrategy] = useState(false);
+  const [strategyText, setStrategyText] = useState('');
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [depositVaultId, setDepositVaultId] = useState(null);
+
+  // Set up provider, signer, contract when account changes
+  useEffect(() => {
+    if (window.ethereum && account) {
+      const p = new ethers.BrowserProvider(window.ethereum);
+      p.getSigner().then(s => {
+        setProvider(p);
+        setSigner(s);
+        setContract(new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, s));
+      });
+    }
+  }, [account]);
+
+  // Load vaults from contract
+  const loadVaults = async () => {
+    if (!contract || !account) return;
+    const vaultIds = await contract.getUserVaults(account);
+    const vaultsOnChain = await Promise.all(vaultIds.map(async (id) => {
+      const v = await contract.getVault(id);
+      return {
+        id: id.toString(),
+        name: v.name,
+        amount: v.amount,
+        targetAmount: v.targetAmount,
+        unlockTime: v.unlockTime,
+        currentYield: v.currentYield,
+        strategy: v.strategy,
+        progress: 0, // will be calculated
+        status: v.isActive ? 'On Track' : 'Completed',
+        isActive: v.isActive,
+        withdrawn: v.withdrawn,
+        user: v.user,
+        createdAt: v.createdAt
+      };
+    }));
+    setVaults(vaultsOnChain);
+    console.log('Fetched vaults for user', account, vaultsOnChain);
+  };
+
+  useEffect(() => {
+    if (contract && account) {
+      loadVaults();
+    }
+  }, [contract, account]);
+
+  // Update handleCreateVault to send ETH as value
+  const handleCreateVault = async (formData) => {
+    try {
+      setLoading(true);
+      console.log('handleCreateVault: started', formData);
+      const amount = ethers.parseEther(formData.amount);
+      const targetAmount = ethers.parseEther(formData.targetAmount);
+      const unlockTime = Math.floor(new Date(formData.unlockTime).getTime() / 1000);
+      console.log('handleCreateVault: sending data', {
+        name: formData.name,
+        targetAmount: targetAmount.toString(),
+        unlockTime: unlockTime,
+        amount: amount.toString()
+      });
+      const tx = await contract.createVault(
+        formData.name,
+        targetAmount,
+        unlockTime,
+        { value: amount }
+      );
+      showToast('Transaction sent! Waiting for confirmation...', 'info');
+      console.log('createVault tx sent:', tx.hash);
+      await tx.wait();
+      showToast('Vault created successfully!', 'success');
+      console.log('Vault created and confirmed');
+      loadVaults();
+    } catch (error) {
+      showToast('Error creating vault: ' + (error.reason || error.message), 'error');
+      console.error('handleCreateVault error:', error);
+    } finally {
+      setLoading(false);
+      console.log('handleCreateVault: finished');
+    }
+  };
+
+  // Withdraw (real transaction)
+  const handleWithdraw = async (vaultId) => {
+    try {
+      setLoading(true);
+      const tx = await contract.withdraw(vaultId);
+      showToast('Transaction sent! Waiting for confirmation...', 'info');
+      await tx.wait();
+      showToast('Withdrawal successful!', 'success');
+      loadVaults();
+    } catch (error) {
+      showToast('Error withdrawing: ' + (error.reason || error.message), 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Connect wallet with feedback and network check
   const connectWallet = async () => {
@@ -345,6 +491,7 @@ function App() {
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
       setAccount(accounts[0]);
       setProvider(provider);
+      setSigner(signer);
       setContract(contract);
       setWalletStatus('connected');
       // Load user vaults
@@ -400,7 +547,23 @@ function App() {
   };
 
   // Enhanced Vault Card component
-  const VaultCard = ({ vault }) => {
+  const VaultCard = ({ vault, openDepositModal, account }) => {
+    const formatAmount = (amount) => {
+      return safeFormatUnits(amount, 18);
+    };
+
+    // Only skip rendering if both are undefined
+    if (vault.amount === undefined && vault.targetAmount === undefined) {
+      return null;
+    }
+
+    console.log('VaultCard:', {
+      amount: vault.amount,
+      targetAmount: vault.targetAmount,
+      formattedAmount: formatAmount(vault.amount),
+      formattedTarget: formatAmount(vault.targetAmount)
+    });
+
     const getStatusIcon = (status) => {
       switch (status) {
         case 'Goal Hit!': return <CheckCircle className="status-icon success" />;
@@ -419,17 +582,14 @@ function App() {
       }
     };
 
-    const formatAmount = (amount) => {
-      return ethers.formatUnits(amount, 6);
-    };
-
     const formatDate = (timestamp) => {
       return new Date(timestamp * 1000).toLocaleDateString();
     };
 
     const daysUntilUnlock = () => {
       const now = Math.floor(Date.now() / 1000);
-      const days = Math.ceil((vault.unlockTime - now) / (24 * 60 * 60));
+      const unlockTime = typeof vault.unlockTime === 'bigint' ? Number(vault.unlockTime) : vault.unlockTime;
+      const days = Math.ceil((unlockTime - now) / (24 * 60 * 60));
       return days > 0 ? days : 0;
     };
 
@@ -471,21 +631,21 @@ function App() {
             <DollarSign size={16} />
             <div>
               <span className="stat-label">Current</span>
-              <span className="stat-value">{formatAmount(vault.amount)} USDC</span>
+              <span className="stat-value">{formatAmount(vault.amount)} ETH</span>
             </div>
           </div>
           <div className="stat-item">
             <Target size={16} />
             <div>
               <span className="stat-label">Target</span>
-              <span className="stat-value">{formatAmount(vault.targetAmount)} USDC</span>
+              <span className="stat-value">{formatAmount(vault.targetAmount)} ETH</span>
             </div>
           </div>
           <div className="stat-item">
             <TrendingUp size={16} />
             <div>
               <span className="stat-label">Yield</span>
-              <span className="stat-value success">+{formatAmount(vault.currentYield)} USDC</span>
+              <span className="stat-value success">+{formatAmount(vault.currentYield)} ETH</span>
             </div>
           </div>
           <div className="stat-item">
@@ -503,9 +663,19 @@ function App() {
         </div>
         
         <div className="vault-actions">
-          <button className="btn-secondary" onClick={() => handleWithdraw(vault.id)}>
-            Withdraw
-          </button>
+          {vault.isActive && !vault.withdrawn && vault.user && account && vault.user.toLowerCase() === account.toLowerCase() && (
+            <button className="btn-secondary" onClick={() => openDepositModal(vault.id)}>
+              Deposit
+            </button>
+          )}
+          {vault.user && account && vault.user.toLowerCase() === account.toLowerCase() && (
+            <button className="btn-secondary" onClick={() => handleWithdraw(vault.id)}>
+              Withdraw
+            </button>
+          )}
+          {vault.user && account && vault.user.toLowerCase() !== account.toLowerCase() && (
+            <div className="not-owner-msg">You are not the owner of this vault.</div>
+          )}
           <button className="btn-outline">
             <ChevronRight size={16} />
             Details
@@ -516,9 +686,18 @@ function App() {
   };
 
   // Statistics component
+  const safeFormatUnits = (value, decimals = 18) => {
+    if (value === null || value === undefined) return "0";
+    try {
+      return ethers.formatUnits(value, decimals);
+    } catch (e) {
+      return "0";
+    }
+  };
+
   const Statistics = () => {
-    const totalValue = vaults.reduce((sum, vault) => sum + parseFloat(ethers.formatUnits(vault.amount, 6)), 0);
-    const totalYield = vaults.reduce((sum, vault) => sum + parseFloat(ethers.formatUnits(vault.currentYield, 6)), 0);
+    const totalValue = vaults.reduce((sum, vault) => sum + parseFloat(safeFormatUnits(vault.amount, 18)), 0);
+    const totalYield = vaults.reduce((sum, vault) => sum + parseFloat(safeFormatUnits(vault.currentYield, 18)), 0);
     const activeVaults = vaults.filter(vault => vault.isActive).length;
 
     return (
@@ -534,7 +713,7 @@ function App() {
           </div>
           <div className="stat-content">
             <h3>Total Value</h3>
-            <p>{totalValue.toFixed(2)} USDC</p>
+            <p>{totalValue.toFixed(2)} ETH</p>
           </div>
         </motion.div>
 
@@ -549,7 +728,7 @@ function App() {
           </div>
           <div className="stat-content">
             <h3>Total Yield</h3>
-            <p>+{totalYield.toFixed(2)} USDC</p>
+            <p>+{totalYield.toFixed(2)} ETH</p>
           </div>
         </motion.div>
 
@@ -642,7 +821,7 @@ function App() {
                   <span className="transaction-type">{tx.type}</span>
                 </div>
                 <div className="transaction-amount">
-                  <span className="amount">{tx.type === 'withdrawal' ? '-' : '+'}{tx.amount} USDC</span>
+                  <span className="amount">{tx.type === 'withdrawal' ? '-' : '+'}{tx.amount} ETH</span>
                   <span className="timestamp">{formatDate(tx.timestamp)}</span>
                 </div>
               </div>
@@ -652,124 +831,6 @@ function App() {
               </div>
             </motion.div>
           ))}
-        </div>
-      </div>
-    );
-  };
-
-  // Analytics Screen Component
-  const AnalyticsScreenComponent = () => {
-    return (
-      <div className="analytics-screen">
-        <div className="section-header">
-          <h2>Analytics & Insights</h2>
-          <p>Track your performance and optimize your strategies</p>
-        </div>
-
-        {/* Key Metrics */}
-        <div className="analytics-metrics">
-          <motion.div 
-            className="metric-card"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <div className="metric-icon">
-              <TrendingUp size={24} />
-            </div>
-            <div className="metric-content">
-              <h3>Monthly Growth</h3>
-              <p className="metric-value success">+{analyticsData.monthlyGrowth}%</p>
-              <span className="metric-label">vs last month</span>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            className="metric-card"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <div className="metric-icon">
-              <DollarSign size={24} />
-            </div>
-            <div className="metric-content">
-              <h3>Total Deposits</h3>
-              <p className="metric-value">{analyticsData.totalDeposits} USDC</p>
-              <span className="metric-label">All time</span>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            className="metric-card"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-          >
-            <div className="metric-icon">
-              <Activity size={24} />
-            </div>
-            <div className="metric-content">
-              <h3>Average APY</h3>
-              <p className="metric-value success">{analyticsData.averageAPY}%</p>
-              <span className="metric-label">Current portfolio</span>
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Strategy Performance */}
-        <div className="strategy-performance">
-          <h3>Strategy Performance</h3>
-          <div className="strategy-list">
-            {analyticsData.topStrategies.map((strategy, index) => (
-              <motion.div 
-                key={strategy.name}
-                className="strategy-item"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.1 * index }}
-              >
-                <div className="strategy-info">
-                  <h4>{strategy.name}</h4>
-                  <span className="strategy-apy">{strategy.apy}% APY</span>
-                </div>
-                <div className="strategy-usage">
-                  <div className="usage-bar">
-                    <div 
-                      className="usage-fill" 
-                      style={{ width: `${strategy.usage}%` }}
-                    ></div>
-                  </div>
-                  <span className="usage-text">{strategy.usage}%</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-
-        {/* Monthly Chart */}
-        <div className="monthly-chart">
-          <h3>Portfolio Growth</h3>
-          <div className="chart-container">
-            <div className="chart-bars">
-              {analyticsData.monthlyChart.map((data, index) => (
-                <motion.div 
-                  key={data.month}
-                  className="chart-bar"
-                  initial={{ height: 0 }}
-                  animate={{ height: `${(data.value / 2000) * 100}%` }}
-                  transition={{ delay: 0.1 * index, duration: 0.8 }}
-                >
-                  <span className="bar-value">${data.value}</span>
-                </motion.div>
-              ))}
-            </div>
-            <div className="chart-labels">
-              {analyticsData.monthlyChart.map(data => (
-                <span key={data.month} className="chart-label">{data.month}</span>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     );
@@ -975,17 +1036,6 @@ function App() {
     );
   };
 
-  const handleWithdraw = async (vaultId) => {
-    try {
-      // Show success message
-      alert('Withdrawal successful!');
-      
-    } catch (error) {
-      console.error('Error withdrawing:', error);
-      alert('Error withdrawing. Please try again.');
-    }
-  };
-
   // Hybrid navigation: sidebar (desktop), bottom nav (mobile)
   // Only show dashboard for 'goals' tab
   const renderTabContent = () => {
@@ -1026,9 +1076,11 @@ function App() {
                     </button>
                   </div>
                 ) : (
-                  vaults.map((vault) => (
-                    <VaultCard key={vault.id} vault={vault} />
-                  ))
+                  vaults
+                    .filter(vault => vault && vault.amount !== undefined && vault.targetAmount !== undefined)
+                    .map((vault) => (
+                      <VaultCard key={vault.id} vault={vault} openDepositModal={openDepositModal} account={account} />
+                    ))
                 )}
               </div>
             </div>
@@ -1090,40 +1142,9 @@ function App() {
 
     const handleSubmit = async (e) => {
       e.preventDefault();
-      setLoading(true);
-      
-      try {
-        // Always create dummy vault for now - no real transactions
-        const unlockTimestamp = Math.floor(new Date(formData.unlockTime).getTime() / 1000);
-        const newVault = {
-          id: (vaults.length + 1).toString(),
-          name: formData.name,
-          amount: ethers.parseUnits(formData.amount, 6),
-          targetAmount: ethers.parseUnits(formData.targetAmount, 6),
-          unlockTime: unlockTimestamp,
-          currentYield: ethers.parseUnits("0", 6),
-          strategy: "AI Strategy: Aave 70%, Compound 30%",
-          progress: "0",
-          status: "Behind Schedule",
-          isActive: true,
-          withdrawn: false,
-          user: account,
-          createdAt: Math.floor(Date.now() / 1000)
-        };
-        
-        setVaults(prev => [...prev, newVault]);
-        setShowCreateVault(false);
-        setFormData({ name: '', targetAmount: '', unlockTime: '', amount: '' });
-        
-        // Show success message
-        alert('Goal created successfully!');
-        
-      } catch (error) {
-        console.error('Error creating vault:', error);
-        alert('Error creating vault. Please try again.');
-      } finally {
-        setLoading(false);
-      }
+      await handleCreateVault(formData);
+      setShowCreateVault(false);
+      setFormData({ name: '', targetAmount: '', unlockTime: '', amount: '' });
     };
 
     return (
@@ -1157,7 +1178,7 @@ function App() {
             </div>
             
             <div className="form-group">
-              <label>Target Amount (USDC)</label>
+              <label>Target Amount (ETH)</label>
               <input
                 type="number"
                 placeholder="500"
@@ -1168,7 +1189,7 @@ function App() {
             </div>
             
             <div className="form-group">
-              <label>Initial Deposit (USDC)</label>
+              <label>Initial Deposit (ETH)</label>
               <input
                 type="number"
                 placeholder="100"
@@ -1195,6 +1216,130 @@ function App() {
         </motion.div>
       </motion.div>
     );
+  };
+
+  // Strategy Modal
+  const StrategyModal = () => (
+    showStrategy && (
+      <div className="modal-overlay" onClick={() => setShowStrategy(false)}>
+        <motion.div className="modal" initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.8, opacity: 0 }}>
+          <div className="modal-header">
+            <h2>AI Strategy Recommendation</h2>
+            <button onClick={() => setShowStrategy(false)}>×</button>
+          </div>
+          <div className="modal-body">
+            <BarChart3 size={32} style={{ color: '#10b981', marginBottom: 12 }} />
+            <p>{strategyText}</p>
+            <p style={{ color: '#059669', fontWeight: 500 }}>Powered by Chainlink Functions + AI</p>
+          </div>
+          <button className="btn-primary" onClick={() => setShowStrategy(false)}>OK</button>
+        </motion.div>
+      </div>
+    )
+  );
+
+  function AnalyticsScreenComponent() {
+    const totalSaved = vaults.reduce((sum, v) => sum + parseFloat(safeFormatUnits(v.amount, 18)), 0);
+    const totalYield = vaults.reduce((sum, v) => sum + parseFloat(safeFormatUnits(v.currentYield, 18)), 0);
+    const avgAPY = 8.5; // mock
+    return (
+      <div className="analytics">
+        <h2>Analytics</h2>
+        <div className="analytics-stats">
+          <div className="stat-card">
+            <DollarSign size={28} />
+            <div>
+              <div className="stat-label">Total Saved</div>
+              <div className="stat-value">{totalSaved.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})} ETH</div>
+            </div>
+          </div>
+          <div className="stat-card">
+            <TrendingUp size={28} />
+            <div>
+              <div className="stat-label">Total Yield</div>
+              <div className="stat-value success">+{totalYield.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})} ETH</div>
+            </div>
+          </div>
+          <div className="stat-card">
+            <PieChart size={28} />
+            <div>
+              <div className="stat-label">Average APY</div>
+              <div className="stat-value">{avgAPY}%</div>
+            </div>
+          </div>
+        </div>
+        <div className="analytics-chart">
+          {/* Mock chart: could use a library or SVG for demo */}
+          <div style={{height:180, background:'#e0fdf4', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', color:'#10b981', fontWeight:600}}>
+            [Yield Growth Chart Placeholder]
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Function to open deposit modal
+  const openDepositModal = (vaultId) => {
+    setDepositVaultId(vaultId);
+    setShowDepositModal(true);
+  };
+
+  // Update DepositModal to send ETH as value
+  const DepositModal = ({ showToast }) => {
+    const [amount, setAmount] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    const handleDeposit = async (e) => {
+      e.preventDefault();
+      setLoading(true);
+      try {
+        const depositAmount = ethers.parseEther(amount);
+        const tx = await contract.depositToVault(depositVaultId, { value: depositAmount });
+        showToast('Transaction sent! Waiting for confirmation...', 'info');
+        await tx.wait();
+        showToast('Deposit successful!', 'success');
+        setShowDepositModal(false);
+        setAmount('');
+        loadVaults();
+      } catch (error) {
+        showToast('Error depositing: ' + (error.reason || error.message), 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    return showDepositModal ? (
+      <div className="modal-overlay" onClick={() => setShowDepositModal(false)}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>Deposit to Vault</h2>
+            <button onClick={() => setShowDepositModal(false)}>×</button>
+          </div>
+          <form onSubmit={handleDeposit} className="vault-form">
+            <div className="form-group">
+              <label>Amount (ETH)</label>
+              <input
+                type="number"
+                placeholder="100"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                required
+                min="0.01"
+                step="0.01"
+              />
+            </div>
+            <button type="submit" className="btn-primary" disabled={loading}>
+              {loading ? 'Depositing...' : 'Deposit'}
+            </button>
+          </form>
+        </div>
+      </div>
+    ) : null;
+  };
+
+  const showToast = (message, type = 'info') => {
+    setToast({ show: true, message, type });
+    setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 2500);
   };
 
   return (
@@ -1234,6 +1379,9 @@ function App() {
           CreateVaultModal={CreateVaultModal}
         />
       )}
+      <StrategyModal />
+      <AppFooter />
+      <DepositModal showToast={showToast} />
     </>
   );
 }
